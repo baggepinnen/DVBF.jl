@@ -22,7 +22,7 @@ default(lab="", grid=false)
     end
 end
 
-const h = 0.03
+const h = 0.1
 
 function lorenz(du,u,p,t)
     du[1] = 10.0(u[2]-u[1])
@@ -31,7 +31,7 @@ function lorenz(du,u,p,t)
 end
 
 function pendcart(xd,x,p,t)
-    g = 9.82; l = 0.35; d = 1
+    g = 9.81; l = 1.0; d = 0.5
     u = 0
     xd[1] = x[2]
     xd[2] = -g/l * sin(x[1]) + u/l * cos(x[1]) - d*x[2]
@@ -45,7 +45,7 @@ function generate_data(T=20)
     sol = solve(prob,Tsit5())
     z = reduce(hcat, sol(0:h:T).u)
     # z[1,:] .= z[1,:]
-    y = vcat(sin.(z[1:1,:]), cos.(z[1:1,:])) .+ 0.5 .* randn.()
+    y = vcat(sin.(z[1:1,:]), cos.(z[1:1,:])) .+ 0.05 .* randn.()
     # y = copy(x)
     z,y
 end
@@ -53,7 +53,7 @@ end
 
 ##
 # function dostuff()
-trajs = [generate_data(3) for i = 1:50]
+trajs = [generate_data(10) for i = 1:50]
 const dataset = [(t[2], t[1]) for t in trajs]
 
 const nz = 3
@@ -92,7 +92,7 @@ function finitialw(x)
     μσw = initialw(x[:,1:3][:])
     μw  = μσw[1:end÷2]
     σw = μσw[(end÷2+1):end]
-    varw = σw .^ 2
+    varw = σw .^ 2 .+ 1e-5
     w   = μw .+ σw .* randn()
 
     return w, μw, varw
@@ -118,8 +118,8 @@ function lossindividual(x,y)
         Ai = sum(α[i]*A[i] for i = 1:nα)
         Ci = sum(α[i]*C[i] for i = 1:nα)
         z  = Ai*z + Ci*w
-        lkl = kl_normalgauss(μq, σq .^ 2, c[])
-         [c[] * lrec + lkl, lrec, kl_normalgauss(μq, σq .^ 2)]
+        lkl = kl_normalgauss(μq, σq .^ 2 .+ 1e-5, c[])
+         [c[] * lrec + lkl, lrec, kl_normalgauss(μq, σq .^ 2 .+ 1e-5)]
     end + [l0, 0.0, l0]
 end
 
@@ -197,7 +197,7 @@ opt = ADADelta(pars, ρ = 0.1)
     global c
     # initializer()
     train!(loss, dataset, opt)
-    Ta  = 1500
+    Ta  = 100
     c[] = min(1, c[] + 1/Ta)
 
     if (i < 50 && i % 5 == 0) || i % 25 == 0
@@ -206,7 +206,7 @@ opt = ADADelta(pars, ρ = 0.1)
         end
         push!(losses, l)
         @printf("Iter : %d  Loss: %8.4g Rec: %8.4g KL: %8.4g\n", i, data(l[1]), data(l[2]), data(l[3]));
-        plot(losses, layout=1, subplot=1, xscale=:log10, size=(600,400)) |> display
+        #plot(losses, layout=1, subplot=1, xscale=:log10, size=(600,400)) |> display
         #     # plot!(dataset[1][2]', subplot=2, c=:blue)
         #     # plot!(sim(dataset[1][1])', subplot=2, c=:orange)
         #     # plot!(data(model(dataset[1][1])'), subplot=2, c=:green, ylims=extrema(dataset[1][2]))
