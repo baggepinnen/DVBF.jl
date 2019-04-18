@@ -1,7 +1,6 @@
 cd(@__DIR__)
 using Plots, Flux, LinearAlgebra, Parameters, Statistics, Random, Printf, OrdinaryDiffEq, DSP, SparseArrays, Dates
 using Flux: params, jacobian, train!, data
-using Flux.Optimise: Param, optimiser, expdecay #src
 using Serialization: serialize, deserialize
 default(lab="", grid=false)
 # include("SkipRNN.jl")
@@ -24,14 +23,8 @@ end
 
 const h = 0.1
 
-function lorenz(du,u,p,t)
-    du[1] = 10.0(u[2]-u[1])
-    du[2] = u[1]*(28.0-u[3]) - u[2]
-    du[3] = u[1]*u[2] - (8/3)*u[3]
-end
-
 function pendcart(xd,x,p,t)
-    g = 9.81; l = 1.0; d = 0.5
+    g = 9.82; l = 1.0; d = 0.5
     u = 0
     xd[1] = x[2]
     xd[2] = -g/l * sin(x[1]) + u/l * cos(x[1]) - d*x[2]
@@ -44,9 +37,7 @@ function generate_data(T=20)
     prob = ODEProblem(pendcart,u0,tspan)
     sol = solve(prob,Tsit5())
     z = reduce(hcat, sol(0:h:T).u)
-    # z[1,:] .= z[1,:]
     y = vcat(sin.(z[1:1,:]), cos.(z[1:1,:])) .+ 0.05 .* randn.()
-    # y = copy(x)
     z,y
 end
 
@@ -74,16 +65,16 @@ const lσp = zeros(nz) # log space
 const μp  = zeros(nz)
 const lσx = param(zeros(nx)) # log space
 
-pars = Flux.Tracker.Params([
-params(pxz);
-params(f);
-params(αnet);
-params(initialw);
-params(initialz);
-params(A...);
-params(C...);
-params(lσx);
-])
+pars = params((
+pxz,
+f,
+αnet,
+initialw,
+initialz,
+(A...),
+(C...),
+lσx,
+))
 
 ##
 const c = [0.2]
@@ -99,17 +90,16 @@ function finitialw(x)
 end
 
 function lossindividual(x,y)
-    w, μw, varw = finitialw(x)
-    z  = initialz(w)
-    l0 = kl_normalgauss(μw, varw, c[])
+    w, μw, σw² = finitialw(x)
+    z  = Float64.(initialz(w))
+    l0 = kl_normalgauss(μw, σw², c[])
     σx  = exp.(lσx) .+ 1e-5
     sum(1:size(x,2)-1) do i
         xi  = x[:,i]
         # xi1 = x[:,i+1]
         μx  = pxz(z)
         lrec  = sum(abs2(xi[i] - μx[i])/(2.0 * σx[i]^2) + 0.5 * log(2π) + lσx[i]  for i in eachindex(xi))
-
-        μσq = f([z; xi]) # TODO: I change from x[t+1] to x[t]
+        μσq = f([z; TrackedArray(xi)]) # TODO: I change from x[t+1] to x[t]
         μq  = μσq[1:end÷2]
         σq  = μσq[(end÷2+1):end]
         w   = μq .+ σq .* randn()
@@ -127,9 +117,9 @@ function loss(x,y)
     lossindividual(x,y)[1]
 end
 
-function kl_normalgauss(μ1, var1, c = 1)
+function kl_normalgauss(μ1, σ1², c = 1)
     l2π = log(2π)
-    lσ1 = log.(sqrt.(var1))
+    lσ1 = log.(sqrt.(σ1²))
     0.5 * sum(c*(l2π) - (l2π + 2lσ1[i]) +
     c*(exp(2lσ1[i]) + abs2(μ1[i])) - 1.0 for i in eachindex(μ1))
 end
@@ -140,12 +130,6 @@ function kl(μ1, lσ1, μ2, lσ2, c = 1)
     c*(exp(2lσ1[i]) + abs2(μ1[i] - μ2[i]))/(exp(2lσ2[i]) + 1e-5) - 1.0 for i in eachindex(μ1))
 end
 
-# function kl(μ1, lσ1, μ2, lσ2, c = 1)
-#     l2π = log(2π)
-#     sum(c*(l2π + 2lσ2[i]) - (l2π + 2lσ1[i]) +
-#     c*(exp(2lσ1[i]) + abs2(μ1[i] - μ2[i]))/exp(2lσ2[i]) for i in eachindex(μ1))
-# end
-
 simulate(T,x::AbstractMatrix) = simulate(T, finitialw(x)[1])
 
 function simulate(T, w = exp.(lσp) .* randn(nz))
@@ -155,7 +139,7 @@ function simulate(T, w = exp.(lσp) .* randn(nz))
         μx = pxz(z[end])
         push!(x, data(μx))# .+ exp.(σx) .* randn(nx)))
 
-        μσq = f([z[end]; x[end]]) # Wrongtime index of xsample?
+        μσq = f([z[end]; x[end]]) # Wrong time index of xsample?
         μq = μσq[1:end÷2]
         σq = μσq[(end÷2+1):end]
         wsample = μq# .+ σq .* randn(nz)
@@ -192,11 +176,12 @@ end
 
 
 losses = [lossindividual(dataset[1]...)]
-opt = ADADelta(pars, ρ = 0.1)
+opt = ADADelta(0.1)
+# Flux.Optimise.updaterule(opt, pars)
 @progress for i = 1:2000
     global c
     # initializer()
-    train!(loss, dataset, opt)
+    train!(loss, pars, dataset, opt)
     Ta  = 100
     c[] = min(1, c[] + 1/Ta)
 
