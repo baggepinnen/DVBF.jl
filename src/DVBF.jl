@@ -1,6 +1,6 @@
 cd(@__DIR__)
 using Plots, Flux, LinearAlgebra, Parameters, Statistics, Random, Printf, OrdinaryDiffEq, DSP, SparseArrays, Dates
-using Flux: params, jacobian, train!, data
+using Flux: params, train!
 using Serialization: serialize, deserialize
 default(lab="", grid=false)
 # include("SkipRNN.jl")
@@ -59,11 +59,11 @@ const αnet = Chain(Dense(nz,nα), softmax)
 const initialw = Chain(Dense(3nx,30,relu), Dense(30,2*nz))
 const initialz = Chain(Dense(nz,30,relu), Dense(30,nz))
 
-const A = [param(0.001randn(nz,nz)) for _ = 1:nα]
-const C = [param(0.001randn(nz,nz)) for _ = 1:nα]
+const A = [(0.001randn(nz,nz)) for _ = 1:nα]
+const C = [(0.001randn(nz,nz)) for _ = 1:nα]
 const lσp = zeros(nz) # log space
 const μp  = zeros(nz)
-const lσx = param(zeros(nx)) # log space
+const lσx = (zeros(nx)) # log space
 
 pars = params((
 pxz,
@@ -99,7 +99,7 @@ function lossindividual(x,y)
         # xi1 = x[:,i+1]
         μx  = pxz(z)
         lrec  = sum(abs2(xi[i] - μx[i])/(2.0 * σx[i]^2) + 0.5 * log(2π) + lσx[i]  for i in eachindex(xi))
-        μσq = f([z; TrackedArray(xi)]) # TODO: I change from x[t+1] to x[t]
+        μσq = f([z; xi]) # TODO: I change from x[t+1] to x[t]
         μq  = μσq[1:end÷2]
         σq  = μσq[(end÷2+1):end]
         w   = μq .+ σq .* randn()
@@ -178,7 +178,7 @@ end
 losses = [lossindividual(dataset[1]...)]
 opt = ADADelta(0.1)
 # Flux.Optimise.updaterule(opt, pars)
-@progress for i = 1:2000
+@progress for i = 1:20
     global c
     # initializer()
     train!(loss, pars, dataset, opt)
@@ -187,10 +187,10 @@ opt = ADADelta(0.1)
 
     if (i < 50 && i % 5 == 0) || i % 25 == 0
         l = mean(1:50) do i
-            data(lossindividual(dataset[i]...))
+            (lossindividual(dataset[i]...))
         end
         push!(losses, l)
-        @printf("Iter : %d  Loss: %8.4g Rec: %8.4g KL: %8.4g\n", i, data(l[1]), data(l[2]), data(l[3]));
+        @printf("Iter : %d  Loss: %8.4g Rec: %8.4g KL: %8.4g\n", i, (l[1]), (l[2]), (l[3]));
         #plot(losses, layout=1, subplot=1, xscale=:log10, size=(600,400)) |> display
         #     # plot!(dataset[1][2]', subplot=2, c=:blue)
         #     # plot!(sim(dataset[1][1])', subplot=2, c=:orange)
