@@ -1,5 +1,5 @@
 cd(@__DIR__)
-using Plots, Flux, LinearAlgebra, Parameters, Statistics, Random, Printf, OrdinaryDiffEq, DSP, SparseArrays, Dates
+using Plots, Flux, Zygote, LinearAlgebra, Parameters, Statistics, Random, Printf, OrdinaryDiffEq, DSP, SparseArrays, Dates
 using Flux: params, train!
 using Serialization: serialize, deserialize
 default(lab="", grid=false)
@@ -78,11 +78,24 @@ lσx,
 
 ##
 const c = [0.2]
-
-function finitialw(x)
+Zygote.@adjoint function Base.reduce(::typeof(hcat), V::AbstractVector{<:AbstractVector})
+    reduce(hcat, V), dV -> (nothing, collect(eachcol(dV)))
+end
+Zygote.@adjoint function view(x::AbstractArray, inds...; kwargs...)
+    view(x, inds...; kwargs...), dy -> begin
+        dx = Zygote._zero(x)
+        if dy isa AbstractVector
+            copyto!(view(dx, inds...; kwargs...), dy)
+        else
+            copyto!(view(dx, inds...; kwargs...), view(dy.parent, inds...; kwargs...))
+        end
+        (dx, ntuple(_->nothing, length(inds))...)
+    end
+end
+@views function finitialw(x)
     μσw = initialw(x[:,1:3][:])
-    μw  = μσw[1:end÷2]
-    σw = μσw[(end÷2+1):end]
+    μw  = μσw[1:nz]
+    σw = μσw[(nz+1):2nz]
     varw = σw .^ 2 .+ 1e-5
     w   = μw .+ σw .* randn()
 
@@ -100,9 +113,9 @@ function lossindividual(x,y)
         μx  = pxz(z)
         lrec  = sum(abs2(xi[i] - μx[i])/(2.0 * σx[i]^2) + 0.5 * log(2π) + lσx[i]  for i in eachindex(xi))
         μσq = f([z; xi]) # TODO: I change from x[t+1] to x[t]
-        μq  = μσq[1:end÷2]
-        σq  = μσq[(end÷2+1):end]
-        w   = μq .+ σq .* randn()
+        μq  = view(μσq, 1:nz)
+        σq  = view(μσq, (nz+1):2nz)
+        w   = μq .+ σq .* randn(nz)
 
         α  = αnet(z)
         Ai = sum(α[i]*A[i] for i = 1:nα)
@@ -178,6 +191,8 @@ end
 losses = [lossindividual(dataset[1]...)]
 opt = ADADelta(0.1)
 # Flux.Optimise.updaterule(opt, pars)
+Zygote.refresh()
+Zygote.gradient(()->lossindividual(dataset[1]...)[1], pars)
 @progress for i = 1:20
     global c
     # initializer()
