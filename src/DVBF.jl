@@ -84,7 +84,7 @@ function finitialw(x)
     μw  = μσw[1:end÷2]
     σw = μσw[(end÷2+1):end]
     varw = σw .^ 2 .+ 1e-5
-    w   = μw .+ σw .* randn()
+    w   = μw .+ σw .* randn(nz)
 
     return w, μw, varw
 end
@@ -102,7 +102,7 @@ function lossindividual(x,y)
         μσq = f([z; TrackedArray(xi)]) # TODO: I change from x[t+1] to x[t]
         μq  = μσq[1:end÷2]
         σq  = μσq[(end÷2+1):end]
-        w   = μq .+ σq .* randn()
+        w   = μq .+ σq .* randn(nz)
 
         α  = αnet(z)
         Ai = sum(α[i]*A[i] for i = 1:nα)
