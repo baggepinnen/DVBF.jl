@@ -108,8 +108,8 @@ function lossindividual(x,y)
         Ai = sum(α[i]*A[i] for i = 1:nα)
         Ci = sum(α[i]*C[i] for i = 1:nα)
         z  = Ai*z + Ci*w
-        lkl = kl_normalgauss(μq, σq .^ 2 .+ 1e-5, c[])
-         [c[] * lrec + lkl, lrec, kl_normalgauss(μq, σq .^ 2 .+ 1e-5)]
+        lkl = kl_normalgauss(μq, σq .+ 1e-5, c[])
+         [c[] * lrec + lkl, lrec, kl_normalgauss(μq, σq .+ 1e-5)]
     end + [l0, 0.0, l0]
 end
 
@@ -117,9 +117,9 @@ function loss(x,y)
     lossindividual(x,y)[1]
 end
 
-function kl_normalgauss(μ1, σ1², c = 1)
+function kl_normalgauss(μ1, σ1, c = 1)
     l2π = log(2π)
-    lσ1 = log.(sqrt.(σ1²))
+    lσ1 = log.(σ1)
     0.5 * sum(c*(l2π) - (l2π + 2lσ1[i]) +
     c*(exp(2lσ1[i]) + abs2(μ1[i])) - 1.0 for i in eachindex(μ1))
 end
