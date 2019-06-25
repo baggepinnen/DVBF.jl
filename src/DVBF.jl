@@ -1,6 +1,6 @@
 cd(@__DIR__)
 using Plots, Flux, Zygote, LinearAlgebra, Parameters, Statistics, Random, Printf, OrdinaryDiffEq, DSP, SparseArrays, Dates
-using Flux: params, train!
+using Flux: params
 using Serialization: serialize, deserialize
 default(lab="", grid=false)
 # include("SkipRNN.jl")
@@ -18,6 +18,18 @@ default(lab="", grid=false)
     @series begin
         seriestype := :scatter
         real.(e), imag.(e)
+    end
+end
+
+function train(loss, ps, dataset, opt; cb=i->nothing)
+    @progress for (i,d) in enumerate(dataset)
+        # Flux.reset!(model)
+        (l1,l2), back = Zygote.forward(()->loss(d[1]), ps)
+        grads = back((1f0,1f0))
+        push!(loss1, l1)
+        push!(loss2, l2)
+        Flux.Optimise.update!(opt, ps, grads)
+        cb(i)
     end
 end
 
@@ -97,12 +109,12 @@ end
     μw  = μσw[1:nz]
     σw = μσw[(nz+1):2nz]
     varw = σw .^ 2 .+ 1e-5
-    w   = μw .+ σw .* randn()
+    w   = μw .+ σw .* randn.()
 
     return w, μw, varw
 end
 
-function lossindividual(x,y)
+function lossindividual(x)
     w, μw, σw² = finitialw(x)
     z  = Float64.(initialz(w))
     l0 = kl_normalgauss(μw, σw², c[])
@@ -112,9 +124,9 @@ function lossindividual(x,y)
         # xi1 = x[:,i+1]
         μx  = pxz(z)
         lrec  = sum(abs2(xi[i] - μx[i])/(2.0 * σx[i]^2) + 0.5 * log(2π) + lσx[i]  for i in eachindex(xi))
-        μσq = f([z; xi]) # TODO: I change from x[t+1] to x[t]
-        μq  = view(μσq, 1:nz)
-        σq  = view(μσq, (nz+1):2nz)
+        μσq = f([z; x[:,i+1]])
+        μq  = μσq[1:nz]
+        σq  = μσq[(nz+1):2nz]
         w   = μq .+ σq .* randn(nz)
 
         α  = αnet(z)
@@ -126,15 +138,15 @@ function lossindividual(x,y)
     end + [l0, 0.0, l0]
 end
 
-function loss(x,y)
-    lossindividual(x,y)[1]
+function loss(y)
+    lossindividual(y)[1]
 end
 
-function kl_normalgauss(μ1, σ1², c = 1)
+function kl_normalgauss(μ, σ², c = 1)
     l2π = log(2π)
-    lσ1 = log.(sqrt.(σ1²))
-    0.5 * sum(c*(l2π) - (l2π + 2lσ1[i]) +
-    c*(exp(2lσ1[i]) + abs2(μ1[i])) - 1.0 for i in eachindex(μ1))
+    lσ = log.(sqrt.(σ²))
+    0.5 * sum(c*(l2π) - (l2π + 2lσ[i]) +
+    c*(exp(2lσ[i]) + abs2(μ[i])) - 1.0 for i in eachindex(μ))
 end
 
 function kl(μ1, lσ1, μ2, lσ2, c = 1)
@@ -147,10 +159,10 @@ simulate(T,x::AbstractMatrix) = simulate(T, finitialw(x)[1])
 
 function simulate(T, w = exp.(lσp) .* randn(nz))
     z,x = [],[]
-    z = [data(initialz(w))]
+    z = [(initialz(w))]
     for i = 1:T
         μx = pxz(z[end])
-        push!(x, data(μx))# .+ exp.(σx) .* randn(nx)))
+        push!(x, (μx))# .+ exp.(σx) .* randn(nx)))
 
         μσq = f([z[end]; x[end]]) # Wrong time index of xsample?
         μq = μσq[1:end÷2]
@@ -160,7 +172,7 @@ function simulate(T, w = exp.(lσp) .* randn(nz))
         α = αnet(z[end])
         Ai = sum(α[i]*A[i] for i = 1:nα)
         Ci = sum(α[i]*C[i] for i = 1:nα)
-        push!(z, data(Ai*z[end] + Ci*wsample))
+        push!(z, (Ai*z[end] + Ci*wsample))
     end
     copy(hcat(z...)'),copy(hcat(x...)')
 end
@@ -168,11 +180,11 @@ end
 function dvbf(x)
     w = finitialw(x)[1]
     z,xf = [],[]
-    z = [data(initialz(w))]
-    for i = 1:size(x,2)
+    z = [(initialz(w))]
+    for i = 1:size(x,2)-1
         μx = pxz(z[end])
-        push!(xf, data(μx))# .+ exp.(σx) .* randn(nx)))
-        μσq = f([z[end]; x[:,i]]) # Wrong time index of xsample?
+        push!(xf, (μx))# .+ exp.(σx) .* randn(nx)))
+        μσq = f([z[end]; x[:,+1]]) # Wrong time index of xsample?
         μq = μσq[1:end÷2]
         σq = μσq[(end÷2+1):end]
         wsample = μq# .+ σq .* randn(nz)
@@ -180,7 +192,7 @@ function dvbf(x)
         α = αnet(z[end])
         Ai = sum(α[i]*A[i] for i = 1:nα)
         Ci = sum(α[i]*C[i] for i = 1:nα)
-        push!(z, data(Ai*z[end] + Ci*wsample))
+        push!(z, (Ai*z[end] + Ci*wsample))
     end
     copy(hcat(z[1:end-1]...)'),copy(hcat(xf...)')
 
@@ -196,7 +208,7 @@ Zygote.gradient(()->lossindividual(dataset[1]...)[1], pars)
 @progress for i = 1:20
     global c
     # initializer()
-    train!(loss, pars, dataset, opt)
+    train(loss, pars, dataset, opt)
     Ta  = 100
     c[] = min(1, c[] + 1/Ta)
 
